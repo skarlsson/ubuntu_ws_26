@@ -117,3 +117,63 @@
         daemon_reload: true
         enabled: true
         state: "{{ 'restarted' if (matrix_bin.changed or matrix_unit.changed) else 'started' }}"
+
+# GNOME slideshow playlist of NASA Image Library pictures (public domain, the API needs no key).
+# The first run downloads ~12 images (a minute or two); later runs reuse them offline;
+# a weekly user timer picks new ones.
+- name: NASA space wallpapers
+  when: ws_space_wallpapers
+  block:
+    - name: Install space-wallpapers script
+      ansible.builtin.copy:
+        src: space-wallpapers
+        dest: "{{ ansible_env.HOME }}/.local/bin/space-wallpapers"
+        mode: "0755"
+
+    - name: Build the wallpaper slideshow
+      ansible.builtin.command: "{{ ansible_env.HOME }}/.local/bin/space-wallpapers"
+      register: wallpapers
+      changed_when: "' (0 downloaded)' not in wallpapers.stdout or 'background set' in wallpapers.stdout"
+
+    - name: Install space-wallpapers user service
+      ansible.builtin.copy:
+        dest: "{{ ansible_env.HOME }}/.config/systemd/user/space-wallpapers.service"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Refresh the NASA space wallpaper slideshow
+          [Service]
+          Type=oneshot
+          ExecStart=%h/.local/bin/space-wallpapers --refresh
+
+    - name: Install space-wallpapers timer
+      ansible.builtin.copy:
+        dest: "{{ ansible_env.HOME }}/.config/systemd/user/space-wallpapers.timer"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Weekly refresh of the NASA space wallpapers
+          [Timer]
+          OnCalendar=weekly
+          Persistent=true
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable the weekly wallpaper refresh
+      ansible.builtin.systemd_service:
+        name: space-wallpapers.timer
+        scope: user
+        daemon_reload: true
+        enabled: true
+        state: started
+
+- name: Hide the Home folder icon on the desktop
+  ansible.builtin.shell: |
+    export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus
+    [ "$(gsettings get org.gnome.shell.extensions.ding show-home)" = "false" ] && exit 0
+    gsettings set org.gnome.shell.extensions.ding show-home false && echo changed
+  args:
+    executable: /bin/bash
+  register: hide_home
+  changed_when: "'changed' in hide_home.stdout"
+  when: ws_hide_desktop_home
