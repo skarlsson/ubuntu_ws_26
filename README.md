@@ -17,6 +17,7 @@ ansible-playbook initial-ubuntu.yml -K
   - `ws_install_rustup: true`
   - `ws_install_uv: true`
   - `ws_install_claude_code: true`
+  - `ws_matrix_saver: true` / `ws_matrix_idle_seconds: 180` (Matrix-rain screensaver as a user service; `matrix-saver --now` shows it immediately)
   - `ws_packages`: the apt package list
 - `roles/ubuntu_ws` is the reusable part and is also consumed by another repo as a git submodule.
   Run the role as the user being set up (no play-level `become`); it escalates only for system tasks.

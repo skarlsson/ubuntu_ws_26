@@ -1,0 +1,173 @@
+#!/usr/bin/python3
+"""Matrix-rain screensaver for GNOME: appears after idle, goes away on touch.
+
+GNOME has no screensaver engine (and idle blanking is off on purpose), so this
+user daemon asks mutter's idle monitor over D-Bus when the user has been idle
+for --idle seconds, shows a fullscreen window, and hides it again as soon as
+the user is active. It only hides its own window; nothing else is touched.
+Installed to ~/.local/bin and run by matrix-saver.service (Ansible role ubuntu_ws).
+"""
+import argparse
+import random
+import signal
+import sys
+
+GLYPHS = [chr(c) for c in range(0x30A0, 0x3100)] + list("0123456789")
+CELL = 20          # column width and glyph size, px
+TRAIL = 18         # glyphs in a fading trail
+HEAD = (0xC8 / 255, 1.0, 0xC8 / 255)
+GREEN = (0.0, 1.0, 0x41 / 255)
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    p.add_argument("--idle", type=int, default=180, metavar="SECONDS",
+                   help="idle time before the saver shows (default 180)")
+    p.add_argument("--now", action="store_true", help="show the saver immediately (testing)")
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    # Imported after argparse so --help works without GTK or a display.
+    import gi
+    gi.require_version("Gtk", "3.0")
+    gi.require_version("Gdk", "3.0")
+    from gi.repository import Gdk, Gio, GLib, Gtk
+    import cairo
+
+    class Column:
+        def __init__(self, height):
+            self.reset(height, initial=True)
+
+        def reset(self, height, initial=False):
+            rows = height // CELL + 1
+            self.y = random.uniform(-rows, rows) if initial else random.uniform(-rows / 2, 0)
+            self.speed = random.uniform(0.3, 1.0)   # rows per frame
+            self.glyphs = [random.choice(GLYPHS) for _ in range(TRAIL)]
+
+        def step(self, height):
+            self.y += self.speed
+            if random.random() < 0.1:
+                self.glyphs[random.randrange(TRAIL)] = random.choice(GLYPHS)
+            if (self.y - TRAIL) * CELL > height:
+                self.reset(height)
+
+    class Saver:
+        def __init__(self, on_input):
+            self.on_input = on_input
+            self.window = None
+            self.columns = []
+            self.timer = 0
+
+        def show(self):
+            if self.window:
+                return
+            w = Gtk.Window()
+            w.set_decorated(False)
+            w.set_keep_above(True)
+            area = Gtk.DrawingArea()
+            area.connect("draw", self.draw)
+            w.add(area)
+            w.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.TOUCH_MASK
+                         | Gdk.EventMask.KEY_PRESS_MASK | Gdk.EventMask.POINTER_MOTION_MASK)
+            for ev in ("button-press-event", "touch-event", "key-press-event", "motion-notify-event"):
+                w.connect(ev, lambda *_: self.on_input() or True)
+            w.fullscreen()
+            w.show_all()
+            self.window, self.columns = w, []
+            self.timer = GLib.timeout_add(50, self.tick, area)
+
+        def hide(self):
+            if not self.window:
+                return
+            GLib.source_remove(self.timer)
+            self.window.hide()
+            self.window.destroy()
+            self.window = None
+
+        def tick(self, area):
+            area.queue_draw()
+            return True
+
+        def draw(self, area, cr):
+            width, height = area.get_allocated_width(), area.get_allocated_height()
+            ncols = width // CELL + 1
+            if len(self.columns) != ncols:
+                self.columns = [Column(height) for _ in range(ncols)]
+            cr.set_source_rgb(0, 0, 0)
+            cr.paint()
+            cr.select_font_face("Noto Sans Mono CJK JP", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+            cr.set_font_size(CELL)
+            for x, col in enumerate(self.columns):
+                head = int(col.y)
+                for i in range(TRAIL):
+                    row = head - i
+                    if row < 0 or row * CELL > height + CELL:
+                        continue
+                    if i == 0:
+                        cr.set_source_rgb(*HEAD)
+                    else:
+                        cr.set_source_rgba(*GREEN, 1.0 - i / TRAIL)
+                    cr.move_to(x * CELL, (row + 1) * CELL)
+                    cr.show_text(col.glyphs[row % TRAIL])
+                col.step(height)
+            return True
+
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+
+    def call(method, params, reply):
+        return bus.call_sync("org.gnome.Mutter.IdleMonitor", "/org/gnome/Mutter/IdleMonitor/Core",
+                             "org.gnome.Mutter.IdleMonitor", method, params,
+                             GLib.VariantType(reply) if reply else None,
+                             Gio.DBusCallFlags.NONE, -1, None)
+
+    state = {"idle": 0, "active": 0}
+
+    def arm_idle():
+        state["idle"] = call("AddIdleWatch", GLib.Variant("(t)", (args.idle * 1000,)), "(u)")[0]
+
+    def show_saver():
+        saver.show()
+        state["active"] = call("AddUserActiveWatch", None, "(u)")[0]
+
+    def dismiss():
+        # Called from the active watch or from input on the window; both may fire.
+        if not saver.window:
+            return
+        saver.hide()
+        if state["active"]:
+            call("RemoveWatch", GLib.Variant("(u)", (state["active"],)), None)
+            state["active"] = 0
+        if state["idle"]:
+            call("RemoveWatch", GLib.Variant("(u)", (state["idle"],)), None)
+        arm_idle()
+
+    def on_watch(_conn, _sender, _path, _iface, _signal, params):
+        wid = params[0]
+        if wid == state["idle"] and wid:
+            show_saver()
+        elif wid == state["active"] and wid:
+            state["active"] = 0
+            dismiss()
+
+    saver = Saver(dismiss)
+    bus.signal_subscribe("org.gnome.Mutter.IdleMonitor", "org.gnome.Mutter.IdleMonitor",
+                         "WatchFired", "/org/gnome/Mutter/IdleMonitor/Core", None,
+                         Gio.DBusSignalFlags.NONE, on_watch)
+    arm_idle()
+    if args.now:
+        show_saver()
+
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, lambda: Gtk.main_quit() or False)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, lambda: Gtk.main_quit() or False)
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:  # noqa: BLE001 - log once to the journal, let systemd restart us
+        sys.stderr.write("matrix-saver: %s\n" % e)
+        sys.exit(1)

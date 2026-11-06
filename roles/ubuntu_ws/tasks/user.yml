@@ -16,3 +16,51 @@
   args:
     creates: "{{ ansible_env.HOME }}/.local/bin/claude"
   when: ws_install_claude_code
+
+# GNOME has no screensaver engine: this user daemon asks mutter's idle monitor and shows a
+# fullscreen window after the idle time, hidden on the first input. It needs a running
+# graphical session for the user (systemd --user).
+- name: Matrix-rain screensaver
+  when: ws_matrix_saver
+  block:
+    - name: Create user bin and systemd user directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ ansible_env.HOME }}/.local/bin"
+        - "{{ ansible_env.HOME }}/.config/systemd/user"
+
+    - name: Install matrix-saver script
+      ansible.builtin.copy:
+        src: matrix-saver
+        dest: "{{ ansible_env.HOME }}/.local/bin/matrix-saver"
+        mode: "0755"
+      register: matrix_bin
+
+    - name: Install matrix-saver user unit
+      ansible.builtin.copy:
+        dest: "{{ ansible_env.HOME }}/.config/systemd/user/matrix-saver.service"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Matrix rain screensaver (shows after idle, hides on input)
+          After=graphical-session.target
+          PartOf=graphical-session.target
+          [Service]
+          ExecStart=%h/.local/bin/matrix-saver --idle {{ ws_matrix_idle_seconds }}
+          Restart=on-failure
+          RestartSec=3
+          [Install]
+          WantedBy=graphical-session.target
+      register: matrix_unit
+
+    # Restart when the script or unit changed so a re-run picks up the new version.
+    - name: Enable and start matrix-saver user service
+      ansible.builtin.systemd_service:
+        name: matrix-saver.service
+        scope: user
+        daemon_reload: true
+        enabled: true
+        state: "{{ 'restarted' if (matrix_bin.changed or matrix_unit.changed) else 'started' }}"
