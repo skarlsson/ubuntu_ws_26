@@ -2,3 +2,6 @@
   become: true
 - import_tasks: user.yml
   become: false
+- import_tasks: claude.yml
+  become: false
+  when: ws_claude_config_repo != ""

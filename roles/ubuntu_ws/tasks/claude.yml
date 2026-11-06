@@ -1,0 +1,66 @@
+# Personal Claude Code config. The repo is the source of truth: ~/.claude/CLAUDE.md and ~/.claude/agents
+# are symlinks into it, so edits on any machine are tracked there. settings.base.json is merged into
+# ~/.claude/settings.json without touching the other keys (the per-machine autoMode block etc.).
+# Runs as the login user (no become); ansible_env.HOME is that user's home.
+- name: Ensure ~/.claude exists
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/.claude"
+    state: directory
+
+# The dir may not exist yet on the first run.
+- name: Check the config repo working tree
+  ansible.builtin.command: git -C {{ ws_claude_config_dir }} status --porcelain
+  register: claude_cfg_status
+  changed_when: false
+  failed_when: false
+
+# Pull only when the tree is clean or the dir does not exist yet, so local edits are never lost.
+- name: Clone or update the config repo
+  ansible.builtin.git:
+    repo: "{{ ws_claude_config_repo }}"
+    dest: "{{ ws_claude_config_dir }}"
+    version: main
+    accept_hostkey: true
+    update: "{{ claude_cfg_status.rc != 0 or claude_cfg_status.stdout == '' }}"
+
+- name: Warn about uncommitted config edits
+  ansible.builtin.debug:
+    msg: "{{ ws_claude_config_dir }} has uncommitted changes, not pulled"
+  when: claude_cfg_status.rc == 0 and claude_cfg_status.stdout != ''
+
+- name: Inspect existing ~/.claude entries
+  ansible.builtin.stat:
+    path: "{{ ansible_env.HOME }}/.claude/{{ item }}"
+  loop: "{{ ws_claude_config_links }}"
+  register: claude_links
+
+- name: Keep a copy of pre-existing non-linked entries
+  ansible.builtin.command: mv {{ ansible_env.HOME }}/.claude/{{ item.item }} {{ ansible_env.HOME }}/.claude/{{ item.item }}.pre-claude-config
+  loop: "{{ claude_links.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists and not item.stat.islnk
+
+- name: Link ~/.claude entries into the config repo
+  ansible.builtin.file:
+    src: "{{ ws_claude_config_dir }}/{{ item }}"
+    dest: "{{ ansible_env.HOME }}/.claude/{{ item }}"
+    state: link
+  loop: "{{ ws_claude_config_links }}"
+
+# jq is in ws_packages. Deep merge, base wins; written only when the result differs.
+- name: Merge settings.base.json into ~/.claude/settings.json
+  ansible.builtin.shell: |
+    set -e
+    f={{ ansible_env.HOME }}/.claude/settings.json
+    b={{ ws_claude_config_dir }}/settings.base.json
+    [ -s "$f" ] || echo '{}' > "$f"
+    new=$(jq -s '.[0] * .[1]' "$f" "$b")
+    if [ "$(printf '%s' "$new" | jq -S .)" != "$(jq -S . "$f")" ]; then
+      printf '%s\n' "$new" > "$f"
+      echo changed
+    fi
+  args:
+    executable: /bin/bash
+  register: claude_settings
+  changed_when: "'changed' in claude_settings.stdout"

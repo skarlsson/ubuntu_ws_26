@@ -5,6 +5,10 @@ ws_install_uv: true
 ws_install_claude_code: true
 ws_matrix_saver: true                   # Matrix-rain screensaver after idle (user service matrix-saver)
 ws_matrix_idle_seconds: 180
+# Personal Claude Code config repo (CLAUDE.md, agents/, settings.base.json), see tasks/claude.yml. Empty = skip.
+ws_claude_config_repo: ""
+ws_claude_config_dir: "{{ ansible_env.HOME }}/.claude-config"
+ws_claude_config_links: [CLAUDE.md, agents]      # entries of the repo linked into ~/.claude
 ws_packages:
   - htop
   - iftop

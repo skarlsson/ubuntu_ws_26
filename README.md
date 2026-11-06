@@ -18,6 +18,8 @@ ansible-playbook initial-ubuntu.yml -K
   - `ws_install_uv: true`
   - `ws_install_claude_code: true`
   - `ws_matrix_saver: true` / `ws_matrix_idle_seconds: 180` (Matrix-rain screensaver as a user service; `matrix-saver --now` shows it immediately)
+  - `ws_claude_config_repo: ""` / `ws_claude_config_dir` (`~/.claude-config`) / `ws_claude_config_links: [CLAUDE.md, agents]`: set the repo to a git URL holding `CLAUDE.md`, `agents/` and `settings.base.json`; the role clones it to `~/.claude-config`, symlinks `CLAUDE.md` and `agents` into `~/.claude` and merges `settings.base.json` into `settings.json`.
+    It pulls only when the working tree is clean, so local edits are never lost. Empty (the default) skips it.
   - `ws_packages`: the apt package list
   - `ws_agent_packages`: CLI tools coding agents lean on (gh, shellcheck, yq, fzf, delta, nodejs/npm, ...)
   - `ws_install_dev_packages: true` / `ws_dev_packages`: toolchains the projects install by hand (ARM gcc, multilib, LLVM, QEMU, CAN, GTK/WebKit for Tauri, GStreamer, analysis tools)
