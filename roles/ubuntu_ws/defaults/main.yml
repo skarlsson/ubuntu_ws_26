@@ -1,0 +1,49 @@
+ws_user: "{{ ansible_user_id }}"        # the login user the role is run as; gets groups + user-level tools
+ws_disable_swap: true                   # swapoff + remove /swap.img (ubuntu_24_ws behaviour)
+ws_install_rustup: true
+ws_install_uv: true
+ws_install_claude_code: true
+ws_packages:
+  - htop
+  - iftop
+  - bmon
+  - curl
+  - wget
+  - unzip
+  - git
+  - git-lfs
+  - tmux
+  - ripgrep
+  - fd-find
+  - bat
+  - jq
+  - traceroute
+  - net-tools
+  - nfs-common
+  - wireguard
+  - libpam-u2f
+  - yubikey-manager
+  - libfido2-1
+  - libfuse2t64
+  - software-properties-common
+  - intel-microcode
+  - dkms
+  - build-essential
+  - autoconf
+  - cmake
+  - ninja-build
+  - meson
+  - pkg-config
+  - clang
+  - python3-pip
+  - python3-venv
+  - pipx
+  - postgresql-client
+  - wl-clipboard
+  - gnome-tweaks
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+  - signal-desktop

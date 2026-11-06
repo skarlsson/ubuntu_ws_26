@@ -1,0 +1,5 @@
+# Ubuntu 26.04 dev workstation. First run: ansible-playbook initial-ubuntu.yml -K
+- hosts: all
+  gather_facts: true
+  roles:
+    - ubuntu_ws

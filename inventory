@@ -1,0 +1,3 @@
+# Ubuntu 25.10+ defaults to sudo-rs, whose password prompt breaks -K;
+# /usr/bin/sudo.ws is the classic sudo shipped alongside.
+localhost ansible_connection=local ansible_become_exe=/usr/bin/sudo.ws
