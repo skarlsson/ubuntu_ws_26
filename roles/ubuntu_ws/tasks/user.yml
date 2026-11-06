@@ -1,4 +1,13 @@
 # Runs as the login user; ansible_env.HOME is that user's home since facts were gathered without become.
+- name: Create user bin and systemd user directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ ansible_env.HOME }}/.local/bin"
+    - "{{ ansible_env.HOME }}/.config/systemd/user"
+
 - name: Install rustup
   ansible.builtin.shell: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
   args:
@@ -17,21 +26,65 @@
     creates: "{{ ansible_env.HOME }}/.local/bin/claude"
   when: ws_install_claude_code
 
+# rustup/cargo are not on PATH until the next login.
+- name: List installed rust targets
+  ansible.builtin.command: rustup target list --installed
+  register: rust_targets
+  changed_when: false
+  when: ws_install_rustup
+  environment:
+    PATH: "{{ ansible_env.HOME }}/.cargo/bin:{{ ansible_env.PATH }}"
+
+- name: Add rust targets
+  ansible.builtin.command: rustup target add {{ item }}
+  loop: "{{ ws_rust_targets }}"
+  when: ws_install_rustup and item not in rust_targets.stdout_lines
+  environment:
+    PATH: "{{ ansible_env.HOME }}/.cargo/bin:{{ ansible_env.PATH }}"
+
+- name: List installed rust toolchains
+  ansible.builtin.command: rustup toolchain list
+  register: rust_toolchains
+  changed_when: false
+  when: ws_install_rustup
+  environment:
+    PATH: "{{ ansible_env.HOME }}/.cargo/bin:{{ ansible_env.PATH }}"
+
+# Toolchains print as e.g. nightly-x86_64-unknown-linux-gnu.
+- name: Install extra rust toolchains
+  ansible.builtin.command: rustup toolchain install {{ item }} -c rust-src
+  loop: "{{ ws_rust_extra_toolchains }}"
+  when: ws_install_rustup and rust_toolchains.stdout_lines | select('match', '^' ~ item ~ '-') | list | length == 0
+  environment:
+    PATH: "{{ ansible_env.HOME }}/.cargo/bin:{{ ansible_env.PATH }}"
+
+- name: Install cargo tools
+  ansible.builtin.command: cargo install {{ item }}
+  args:
+    creates: "{{ ansible_env.HOME }}/.cargo/bin/{{ item }}"
+  loop: "{{ ws_cargo_tools }}"
+  when: ws_install_rustup
+  environment:
+    PATH: "{{ ansible_env.HOME }}/.cargo/bin:{{ ansible_env.PATH }}"
+
+- name: Install bazelisk
+  ansible.builtin.get_url:
+    url: https://github.com/bazelbuild/bazelisk/releases/download/v{{ ws_bazelisk_version }}/bazelisk-linux-amd64
+    dest: "{{ ansible_env.HOME }}/.local/bin/bazelisk"
+    mode: "0755"
+
+- name: Link bazel to bazelisk
+  ansible.builtin.file:
+    src: bazelisk
+    dest: "{{ ansible_env.HOME }}/.local/bin/bazel"
+    state: link
+
 # GNOME has no screensaver engine: this user daemon asks mutter's idle monitor and shows a
 # fullscreen window after the idle time, hidden on the first input. It needs a running
 # graphical session for the user (systemd --user).
 - name: Matrix-rain screensaver
   when: ws_matrix_saver
   block:
-    - name: Create user bin and systemd user directories
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        mode: "0755"
-      loop:
-        - "{{ ansible_env.HOME }}/.local/bin"
-        - "{{ ansible_env.HOME }}/.config/systemd/user"
-
     - name: Install matrix-saver script
       ansible.builtin.copy:
         src: matrix-saver

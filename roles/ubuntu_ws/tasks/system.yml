@@ -42,6 +42,28 @@
     - { name: fs.inotify.max_user_watches, value: "524288" }
     - { name: vm.max_map_count, value: "262144" }
 
+- name: Raise the open-files limit
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/90-ws-nofile.conf
+    mode: "0644"
+    content: |
+      * soft nofile {{ ws_nofile_limit }}
+      * hard nofile {{ ws_nofile_limit }}
+
+- name: Load kernel modules at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/ws.conf
+    mode: "0644"
+    content: |
+      {% for m in ws_modules %}
+      {{ m }}
+      {% endfor %}
+
+- name: Load kernel modules now
+  ansible.builtin.command: modprobe {{ item }}
+  loop: "{{ ws_modules }}"
+  changed_when: false
+
 - name: Add Docker apt repository
   ansible.builtin.deb822_repository:
     name: docker
@@ -61,6 +83,18 @@
     architectures: amd64
     signed_by: https://updates.signal.org/desktop/apt/keys.asc
 
+# Before the upgrade task so its update_cache picks up the i386 indexes.
+- name: List foreign dpkg architectures
+  ansible.builtin.command: dpkg --print-foreign-architectures
+  register: foreign_archs
+  changed_when: false
+  when: ws_i386
+
+- name: Add i386 dpkg architecture
+  ansible.builtin.command: dpkg --add-architecture i386
+  register: i386_added
+  when: ws_i386 and 'i386' not in foreign_archs.stdout_lines
+
 - name: Upgrade installed packages
   ansible.builtin.apt:
     update_cache: true
@@ -71,6 +105,23 @@
   ansible.builtin.apt:
     name: "{{ ws_packages }}"
     state: present
+
+- name: Install agent CLI tools
+  ansible.builtin.apt:
+    name: "{{ ws_agent_packages }}"
+    state: present
+
+- name: Install dev toolchains
+  ansible.builtin.apt:
+    name: "{{ ws_dev_packages }}"
+    state: present
+  when: ws_install_dev_packages
+
+- name: Install i386 libraries
+  ansible.builtin.apt:
+    name: "{{ ws_i386_packages }}"
+    state: present
+  when: ws_i386
 
 # The .deb adds Google's apt source itself, so apt upgrades keep it current.
 - name: Check for Google Chrome
@@ -109,3 +160,10 @@
     name: docker
     enabled: true
     state: started
+
+# Amazon's installer; --system puts it under /usr/local/aws-cli with /usr/local/bin/aws.
+- name: Install AWS CLI v2
+  ansible.builtin.shell: curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash -s -- --system
+  args:
+    creates: /usr/local/bin/aws
+  when: ws_install_awscli

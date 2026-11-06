@@ -53,3 +53,113 @@ ws_packages:
   - python3-gi-cairo
   - gir1.2-gtk-3.0
   - fonts-noto-cjk
+
+# CLI tools coding agents (Claude Code etc.) lean on.
+ws_agent_packages:
+  - tree
+  - gh
+  - shellcheck
+  - yq
+  - sqlite3
+  - rsync
+  - zip
+  - xz-utils
+  - file
+  - strace
+  - lsof
+  - ncdu
+  - dos2unix
+  - nodejs
+  - npm
+  - moreutils
+  - python3-dev
+  - git-delta
+  - fzf
+  - entr
+  - inotify-tools
+  - bind9-dnsutils
+  - universal-ctags
+  - bc
+  - tig
+  - hyperfine
+  - kitty
+
+# Toolchains the projects under ~/dev install by hand (embedded ARM, CAN, QEMU, Tauri/GTK, GStreamer, analysis).
+ws_install_dev_packages: true
+ws_dev_packages:
+  - gcc-multilib
+  - g++-multilib
+  - llvm
+  - lld
+  - gcc-arm-none-eabi
+  - libnewlib-arm-none-eabi
+  - libstdc++-arm-none-eabi-newlib
+  - gdb-multiarch
+  - cppcheck
+  - gcovr
+  - lcov
+  - valgrind
+  - ccache
+  - flex
+  - bison
+  - gperf
+  - indent
+  - zstd
+  - protobuf-compiler
+  - libssl-dev
+  - libsystemd-dev
+  - libffi-dev
+  - libclang-dev
+  - libglib2.0-dev
+  - libpixman-1-dev
+  - libgtk-3-dev
+  - libwebkit2gtk-4.1-dev
+  - libjavascriptcoregtk-4.1-dev
+  - libsoup-3.0-dev
+  - libayatana-appindicator3-dev
+  - librsvg2-dev
+  - libpango1.0-dev
+  - libcairo2-dev
+  - libgdk-pixbuf-2.0-dev
+  - libatk1.0-dev
+  - patchelf
+  - libcurl4-openssl-dev
+  - libjsoncpp-dev
+  - libusb-1.0-0
+  - libusb-1.0-0-dev
+  - dfu-util
+  - can-utils
+  - tcpdump
+  - socat
+  - qemu-user
+  - qemu-system-x86
+  - qemu-system-common
+  - xvfb
+  - podman
+  - linux-headers-generic
+  - libgstreamer1.0-dev
+  - libgstreamer-plugins-base1.0-dev
+  - gstreamer1.0-plugins-good
+  - gstreamer1.0-plugins-bad
+  - gstreamer1.0-libav
+  - gstreamer1.0-vaapi
+  - ffmpeg
+  - osmium-tool
+  - libsqlite3-0
+  - gettext-base
+  - x11-utils
+  - xdotool
+
+# 32-bit multiarch libs (i686 targets).
+ws_i386: true
+ws_i386_packages: [libc6:i386, libstdc++6:i386, libgcc-s1:i386, zlib1g:i386]
+
+ws_nofile_limit: 65536                 # pam_limits nofile for all users (build tools want >= 4096)
+ws_modules: [vcan]                     # kernel modules loaded at boot (virtual CAN for the automotive projects)
+
+# Rust extras on top of rustup's default profile (rustfmt + clippy are already in it).
+ws_rust_targets: [i686-unknown-linux-gnu, aarch64-unknown-linux-gnu, thumbv7em-none-eabihf, thumbv7m-none-eabi]
+ws_rust_extra_toolchains: [nightly]    # each installed with rust-src (build-std / tier-3 targets)
+ws_cargo_tools: [cargo-watch, cargo-hack, cargo-tarpaulin, zellij]   # binary name == crate name
+ws_bazelisk_version: "1.29.0"
+ws_install_awscli: true                # AWS CLI v2, system-wide under /usr/local

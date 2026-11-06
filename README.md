@@ -19,5 +19,28 @@ ansible-playbook initial-ubuntu.yml -K
   - `ws_install_claude_code: true`
   - `ws_matrix_saver: true` / `ws_matrix_idle_seconds: 180` (Matrix-rain screensaver as a user service; `matrix-saver --now` shows it immediately)
   - `ws_packages`: the apt package list
+  - `ws_agent_packages`: CLI tools coding agents lean on (gh, shellcheck, yq, fzf, delta, nodejs/npm, ...)
+  - `ws_install_dev_packages: true` / `ws_dev_packages`: toolchains the projects install by hand (ARM gcc, multilib, LLVM, QEMU, CAN, GTK/WebKit for Tauri, GStreamer, analysis tools)
+  - `ws_i386: true` / `ws_i386_packages`: i386 dpkg architecture + 32-bit libc/libstdc++/zlib (i686 targets)
+  - `ws_nofile_limit: 65536`: soft/hard open-files limit for all users (`/etc/security/limits.d/90-ws-nofile.conf`)
+  - `ws_modules: [vcan]`: kernel modules loaded now and at boot (`/etc/modules-load.d/ws.conf`)
+  - `ws_rust_targets`: extra rustup targets (i686, aarch64, thumbv7em/thumbv7m bare metal)
+  - `ws_rust_extra_toolchains: [nightly]`: extra toolchains, each with `rust-src`
+  - `ws_cargo_tools`: `cargo install`ed tools (binary name == crate name)
+  - `ws_bazelisk_version`: bazelisk release installed as `~/.local/bin/bazelisk` with a `bazel` symlink
+  - `ws_install_awscli: true`: AWS CLI v2, system-wide under `/usr/local`
 - `roles/ubuntu_ws` is the reusable part and is also consumed by another repo as a git submodule.
   Run the role as the user being set up (no play-level `become`); it escalates only for system tasks.
+
+## Not covered on purpose
+
+These stay in the projects' own install scripts:
+
+- ESP-IDF and the Espressif udev rules
+- Pico SDK / picotool
+- Go
+- QNX SDP and its nightly tier-3 target tricks
+- anything from a corporate GitLab (registries, tokens, toos, ivshmem-server, xcp-gui)
+- Flutter checkouts
+- per-project Python venvs
+- project network setup (vcan interfaces, tap devices, QEMU sysctl/setcap)
