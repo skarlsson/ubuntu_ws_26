@@ -1,9 +1,12 @@
 #!/usr/bin/python3
-"""Rotating NASA space wallpapers for a GNOME desktop.
+"""Rotating space wallpapers for a GNOME desktop.
 
-Picks images from the NASA Image and Video Library (public domain, no API key),
+Picks images from the ESA/Hubble, ESA/Webb and ESO "Top 100" RSS feeds (or, with
+--source nasa, the NASA Image and Video Library: public domain, no API key),
 downloads them to --dir, writes a GNOME slideshow playlist and points
-org.gnome.desktop.background at it. With enough images already on disk and no
+org.gnome.desktop.background at it. The Top 100 images are CC BY 4.0: credit the
+observatory (ESA/Hubble, ESA/Webb, ESO); manifest.json keeps each image's title
+and page link for attribution. With enough images already on disk and no
 --refresh it never touches the network, so re-runs are fast and idempotent.
 Installed to ~/.local/bin and refreshed weekly by space-wallpapers.timer
 (Ansible role ubuntu_ws).
@@ -18,10 +21,19 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
 API = "https://images-api.nasa.gov/search"
 UA = {"User-Agent": "space-wallpapers/1.0"}
+FEEDS = [
+    ("hubble", "https://esahubble.org/images/feed/top100/", "https://cdn.esahubble.org/archives/images"),
+    ("webb", "https://esawebb.org/images/feed/top100/", "https://cdn.esawebb.org/archives/images"),
+    ("eso", "https://www.eso.org/public/images/feed/top100/", "https://cdn.eso.org/images"),
+]
+# Full resolution first (may 404, be portrait or too big), then the fixed 1920x1200
+# landscape crop. Never large/: Webb's is hundreds of MB.
+SIZES = ("publicationjpg", "wallpaper4")
 MAX_BYTES = 25 * 1024 * 1024
 MIN_BYTES = 50 * 1024      # smaller files are treated as missing/broken
 MIN_IMAGES = 3
@@ -48,8 +60,10 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     p.add_argument("--dir", default="~/Pictures/space-wallpapers", help="image directory (default %(default)s)")
     p.add_argument("--count", type=int, default=12, help="images in the slideshow (default %(default)s)")
+    p.add_argument("--source", choices=("top100", "nasa"), default="top100",
+                   help="ESA/Hubble, ESA/Webb and ESO Top 100 feeds, or the NASA library (default %(default)s)")
     p.add_argument("--queries", nargs="+", default=QUERIES, metavar="QUERY",
-                   help="NASA library search terms, used round-robin")
+                   help="NASA library search terms, used round-robin (--source nasa only)")
     p.add_argument("--duration", type=int, default=900, metavar="SECONDS",
                    help="seconds each image is shown (default %(default)s)")
     p.add_argument("--transition", type=int, default=5, metavar="SECONDS",
@@ -82,6 +96,32 @@ def search(query):
     return items
 
 
+def nasa_items(query):
+    items = []
+    for item in search(query):
+        data = (item.get("data") or [{}])[0]
+        nasa_id = data.get("nasa_id")
+        if nasa_id and "href" in item and not looks_like_event(data):
+            items.append({"id": nasa_id, "title": data.get("title", ""), "href": item["href"],
+                          "page": f"https://images.nasa.gov/details/{nasa_id}"})
+    return items
+
+
+def feed_items(name, url, cdn):
+    """The Top 100 feed's items, shuffled; the slug is the last segment of the item link."""
+    with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=30) as r:
+        root = ET.parse(r).getroot()
+    items = []
+    for it in root.iter("item"):
+        link = (it.findtext("link") or it.findtext("guid") or "").strip()
+        slug = next((s for s in reversed(urllib.parse.urlparse(link).path.split("/")) if s), None)
+        if slug:
+            items.append({"id": f"{name}-{slug}", "title": (it.findtext("title") or "").strip(),
+                          "page": link, "slug": slug, "cdn": cdn})
+    random.shuffle(items)
+    return items
+
+
 def looks_like_event(data):
     text = " ".join([data.get("title", ""), data.get("description", ""),
                      " ".join(data.get("keywords") or [])]).lower()
@@ -99,6 +139,34 @@ def download(item, path):
     if url is None:
         raise ValueError("no ~large.jpg/~orig.jpg variant")
     url = https(url)
+    fetch(url, path)
+    return url
+
+
+def feed_sizes():
+    # Without Pillow the dimensions cannot be checked and publicationjpg may be portrait.
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        return ("wallpaper4",)
+    return SIZES
+
+
+def download_feed(item, path):
+    """Fetch the first suitable size of a Top 100 item to path; returns its URL."""
+    errors = []
+    for size in feed_sizes():
+        url = f"{item['cdn']}/{size}/{item['slug']}.jpg"
+        try:
+            fetch(url, path)
+            return url
+        except Exception as e:
+            errors.append(f"{size}: {e}")
+    raise ValueError("; ".join(errors))
+
+
+def fetch(url, path):
+    """Download an image URL to path (size-capped, dimension-checked) or raise."""
     with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60) as r:
         size = int(r.headers.get("Content-Length") or 0)
         if not r.headers.get_content_type().startswith("image/"):
@@ -121,7 +189,6 @@ def download(item, path):
     except ValueError:
         os.remove(path)
         raise
-    return url
 
 
 def check_dimensions(path):
@@ -132,56 +199,68 @@ def check_dimensions(path):
         return
     with Image.open(path) as im:
         w, h = im.size
-    # Portrait and extreme panoramas lose most of the picture to the zoom crop on 16:9.
-    if w < 1600 or w < h or w > 2.2 * h:
+    # Portrait, square and extreme panoramas lose most of the picture to the zoom crop on 16:9.
+    if w < 1600 or w <= h or w > 2.2 * h:
         raise ValueError(f"unsuitable size {w}x{h}")
+
+
+def load_manifest(path):
+    """Return (source, images); the old format is a bare list of NASA entries."""
+    with open(path) as f:
+        m = json.load(f)
+    if isinstance(m, list):
+        return "nasa", [{"id": e["nasa_id"], "title": e.get("title", ""), "url": e.get("url", ""),
+                         "page": f"https://images.nasa.gov/details/{e['nasa_id']}"} for e in m]
+    return m.get("source"), m.get("images", [])
 
 
 def collect(args, outdir, manifest_path):
     """Return (entries, downloaded): at least what is wanted, from disk and the API."""
     entries = []
+    # A manifest from another source counts as --refresh, so switching sources re-picks.
     if not args.refresh and os.path.isfile(manifest_path):
-        with open(manifest_path) as f:
-            entries = [e for e in json.load(f) if valid(os.path.join(outdir, e["nasa_id"] + ".jpg"))]
+        source, images = load_manifest(manifest_path)
+        if source == args.source:
+            entries = [e for e in images if valid(os.path.join(outdir, e["id"] + ".jpg"))]
     if len(entries) >= args.count:
         return entries[:args.count], 0
 
-    seen = {e["nasa_id"] for e in entries}
+    if args.source == "nasa":
+        sources = {f"search {q!r}": (lambda q=q: nasa_items(q)) for q in args.queries}
+    else:
+        sources = {f"feed {f[0]}": (lambda f=f: feed_items(*f)) for f in FEEDS}
+    seen = {e["id"] for e in entries}
     results = {}
     downloaded = 0
-    # Round-robin over the queries, one new item per query per pass, until enough.
+    # Round-robin over the queries/feeds, one new item per source per pass, until enough.
     while len(entries) < args.count:
         progress = False
-        for query in args.queries:
+        for name, load in sources.items():
             if len(entries) >= args.count:
                 break
-            if query not in results:
+            if name not in results:
                 try:
-                    results[query] = search(query)
+                    results[name] = load()
                 except Exception as e:
-                    warn(f"search {query!r} failed: {e}")
-                    results[query] = []
-            while results[query]:
-                item = results[query].pop()
-                data = (item.get("data") or [{}])[0]
-                nasa_id = data.get("nasa_id")
-                if not nasa_id or nasa_id in seen or "href" not in item:
+                    warn(f"{name} failed: {e}")
+                    results[name] = []
+            while results[name]:
+                item = results[name].pop()
+                if item["id"] in seen:
                     continue
-                if looks_like_event(data):
-                    seen.add(nasa_id)
-                    continue
-                seen.add(nasa_id)
-                path = os.path.join(outdir, nasa_id + ".jpg")
+                seen.add(item["id"])
+                path = os.path.join(outdir, item["id"] + ".jpg")
                 try:
                     if valid(path):
-                        url = https(item["href"])
+                        url = (https(item["href"]) if args.source == "nasa"
+                               else f"{item['cdn']}/{feed_sizes()[0]}/{item['slug']}.jpg")
                     else:
-                        url = download(item, path)
+                        url = (download if args.source == "nasa" else download_feed)(item, path)
                         downloaded += 1
                 except Exception as e:
-                    warn(f"{nasa_id}: {e}")
+                    warn(f"{item['id']}: {e}")
                     continue
-                entries.append({"nasa_id": nasa_id, "title": data.get("title", ""), "url": url})
+                entries.append({"id": item["id"], "title": item["title"], "url": url, "page": item["page"]})
                 progress = True
                 break
         if not progress:
@@ -228,14 +307,14 @@ def main():
         print(f"space-wallpapers: only {len(entries)} images available, need at least {MIN_IMAGES}",
               file=sys.stderr)
         return 1
-    manifest = json.dumps(entries, indent=2) + "\n"
+    manifest = json.dumps({"source": args.source, "images": entries}, indent=2) + "\n"
     if not os.path.isfile(manifest_path) or open(manifest_path).read() != manifest:
         with open(manifest_path, "w") as f:
             f.write(manifest)
 
     # Shuffle seeded by the image set: a new set gets a new order, a re-run with
     # the same set rewrites nothing.
-    paths = sorted(os.path.join(outdir, e["nasa_id"] + ".jpg") for e in entries)
+    paths = sorted(os.path.join(outdir, e["id"] + ".jpg") for e in entries)
     random.Random(",".join(paths)).shuffle(paths)
     xml = playlist_xml(paths, args.duration, args.transition)
     os.makedirs(PLAYLIST_DIR, exist_ok=True)

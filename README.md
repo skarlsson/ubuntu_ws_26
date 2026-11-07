@@ -18,7 +18,7 @@ ansible-playbook initial-ubuntu.yml -K
   - `ws_install_uv: true`
   - `ws_install_claude_code: true`
   - `ws_matrix_saver: true` / `ws_matrix_idle_seconds: 180` (Matrix-rain screensaver as a user service; `matrix-saver --now` shows it immediately)
-  - `ws_space_wallpapers: true`: NASA space wallpaper slideshow in `~/Pictures/space-wallpapers`, refreshed weekly by a user timer; `space-wallpapers --refresh` picks new ones now
+  - `ws_space_wallpapers: true`: space wallpaper slideshow in `~/Pictures/space-wallpapers` from the ESA/Hubble, ESA/Webb and ESO Top 100 feeds (CC BY 4.0), refreshed weekly by a user timer; `space-wallpapers --refresh` picks new ones now, `space-wallpapers --source nasa` uses the NASA Image Library
   - `ws_hide_desktop_home: true`: no Home folder icon on the GNOME desktop (`org.gnome.shell.extensions.ding show-home false`)
   - `ws_claude_config_repo: ""` / `ws_claude_config_dir` (`~/.claude-config`) / `ws_claude_config_links: [CLAUDE.md, agents]`: set the repo to a git URL holding `CLAUDE.md`, `agents/` and `settings.base.json`; the role clones it to `~/.claude-config`, symlinks `CLAUDE.md` and `agents` into `~/.claude` and merges `settings.base.json` into `settings.json`.
     It pulls only when the working tree is clean, so local edits are never lost. Empty (the default) skips it.
